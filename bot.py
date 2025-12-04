@@ -70,7 +70,8 @@ def create_zinipay_payment(amount, user_id, user_email=None, metadata=None):
         
         logger.info(f"ZiniPay response status: {response.status_code}")
         
-        if response.status_code == 200:
+        # Accept both 200 and 201 status codes
+        if response.status_code in [200, 201]:
             data = response.json()
             logger.info(f"ZiniPay response: {json.dumps(data, indent=2)}")
             
