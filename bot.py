@@ -22,9 +22,9 @@ API_ID = os.getenv('TELEGRAM_API_ID', 'YOUR_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH', 'YOUR_API_HASH')
 SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING', 'YOUR_SESSION_STRING')
 ZINIPAY_API_KEY = os.getenv('ZINIPAY_API_KEY', 'YOUR_ZINIPAY_API_KEY')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://yourdomain.com/webhook')
-SUCCESS_URL = os.getenv('SUCCESS_URL', 'https://yourdomain.com/success')
-CANCEL_URL = os.getenv('CANCEL_URL', 'https://yourdomain.com/cancel')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://zinipy.onrender.com/webhook')
+SUCCESS_URL = os.getenv('SUCCESS_URL', 'https://zinipy.onrender.com/success')
+CANCEL_URL = os.getenv('CANCEL_URL', 'https://zinipy.onrender.com/cancel')
 FLASK_PORT = int(os.getenv('FLASK_PORT', '5000'))
 
 # Initialize Flask app
@@ -59,6 +59,8 @@ def create_zinipay_payment(amount, user_id, user_email=None, metadata=None):
             'Content-Type': 'application/json'
         }
         
+        logger.info(f"Creating payment for user {user_id}, amount: {amount}")
+        
         response = requests.post(
             'https://api.zinipay.com/v1/payment/create',
             headers=headers,
@@ -66,14 +68,23 @@ def create_zinipay_payment(amount, user_id, user_email=None, metadata=None):
             timeout=30
         )
         
+        logger.info(f"ZiniPay response status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
-            if data.get('status'):
-                return {
-                    'success': True,
-                    'payment_url': data.get('payment_url'),
-                    'invoice_id': invoice_id
-                }
+            logger.info(f"ZiniPay response: {json.dumps(data, indent=2)}")
+            
+            # Check if payment creation was successful
+            if data.get('status') == True:
+                payment_url = data.get('payment_url')
+                if payment_url:
+                    logger.info(f"Payment created successfully: {payment_url}")
+                    return {
+                        'success': True,
+                        'payment_url': payment_url,
+                        'invoice_id': invoice_id,
+                        'val_id': data.get('val_id')
+                    }
         
         logger.error(f"ZiniPay API error: {response.text}")
         return {'success': False, 'error': 'Failed to create payment'}
@@ -166,6 +177,16 @@ def webhook():
 def success():
     """Handle successful payment redirect"""
     invoice_id = request.args.get('invoiceId')
+    
+    # Try to notify user on success page hit
+    if invoice_id and invoice_id in pending_payments:
+        payment_info = pending_payments[invoice_id]
+        
+        # Verify and notify
+        asyncio.run_coroutine_threadsafe(
+            verify_and_notify(invoice_id, payment_info),
+            client.loop
+        )
     
     html = f"""
     <!DOCTYPE html>
@@ -294,6 +315,27 @@ def health():
 
 
 # Telethon event handlers
+async def verify_and_notify(invoice_id, payment_info):
+    """Verify payment and notify user"""
+    try:
+        # Wait a moment for payment to process
+        await asyncio.sleep(2)
+        
+        verification = verify_zinipay_payment(invoice_id)
+        
+        if verification and verification.get('status') == 'COMPLETED':
+            await notify_payment_success(payment_info, verification)
+            
+            # Remove from pending
+            if invoice_id in pending_payments:
+                del pending_payments[invoice_id]
+        else:
+            logger.warning(f"Payment verification pending for invoice {invoice_id}")
+            
+    except Exception as e:
+        logger.error(f"Error in verify_and_notify: {e}")
+
+
 async def notify_payment_success(payment_info, verification):
     """Send payment success notification to user"""
     try:
@@ -473,6 +515,9 @@ def run_flask():
 async def main():
     """Main function to start the bot"""
     logger.info("Starting ZiniPay Telegram Userbot...")
+    logger.info(f"Webhook URL: {WEBHOOK_URL}")
+    logger.info(f"Success URL: {SUCCESS_URL}")
+    logger.info(f"Cancel URL: {CANCEL_URL}")
     
     # Start Flask in a separate thread
     flask_thread = Thread(target=run_flask, daemon=True)
