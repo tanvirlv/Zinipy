@@ -37,13 +37,17 @@ pending_payments = {}
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 
-def create_zinipay_payment(amount, user_id, metadata=None):
+def create_zinipay_payment(amount, user_id, user_email=None, metadata=None):
     """Create a payment request with ZiniPay"""
     try:
         invoice_id = str(uuid.uuid4())
         
+        # Use provided email or generate a placeholder
+        email = user_email or f"user{user_id}@telegram.user"
+        
         payload = {
             "amount": str(amount),
+            "cus_email": email,
             "redirect_url": f"{SUCCESS_URL}?invoiceId={invoice_id}",
             "cancel_url": f"{CANCEL_URL}?invoiceId={invoice_id}",
             "webhook_url": f"{WEBHOOK_URL}?invoiceId={invoice_id}",
@@ -110,6 +114,21 @@ def verify_zinipay_payment(invoice_id):
 
 
 # Flask routes
+@app.route('/', methods=['GET'])
+def index():
+    """Root endpoint"""
+    return jsonify({
+        'status': 'online',
+        'service': 'ZiniPay Telegram Bot',
+        'endpoints': {
+            'webhook': '/webhook',
+            'success': '/success',
+            'cancel': '/cancel',
+            'health': '/health'
+        }
+    })
+
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Handle ZiniPay webhook notifications"""
@@ -346,6 +365,7 @@ async def handle_pay_command(event):
         result = create_zinipay_payment(
             amount=amount,
             user_id=user_id,
+            user_email=f"user{user_id}@telegram.user",
             metadata={
                 "user_id": str(user_id),
                 "username": sender.username or "N/A",
